@@ -3,7 +3,7 @@
 import struct
 import unittest
 
-from lifx import Bitfield, Field, FieldType
+from licht.lifx import Bitfield, Field, FieldType
 
 
 class LifxBitFieldTest(unittest.TestCase):
@@ -12,7 +12,7 @@ class LifxBitFieldTest(unittest.TestCase):
         class SimpleBitfield(Bitfield):
             fields = [
                 Field('foo', 16, FieldType.int),
-                Field('bar', 6*8, FieldType.bytes),
+                Field('bar', 6 * 8, FieldType.bytes),
                 Field('baz', 64, FieldType.float),
             ]
 
