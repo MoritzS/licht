@@ -1,10 +1,12 @@
 from collections import namedtuple
 import datetime
+from enum import Enum
 import functools
 from itertools import islice
 import random
 import socket
 import struct
+import sys
 
 
 LIFX_PORT = 56700
@@ -52,9 +54,87 @@ MESSAGE_TYPES_REVERSE = {val: key for key, val in MESSAGE_TYPES.items()}
 RESERVED = object()
 
 
-class Field(namedtuple('FieldBase', ('name', 'bits', 'pytype'))):
-    def __new__(cls, name, bits, pytype=None):
-        return super().__new__(cls, name, bits, pytype)
+class FieldType(Enum):
+    bytes = 0
+    int = 1
+    uint = 2
+    bool = 3
+    float = 4
+
+    def from_bytes(self, value):
+        return getattr(self, 'from_bytes_{}'.format(self.name))(value)
+
+    @staticmethod
+    def from_bytes_bytes(value):
+        return value
+
+    @staticmethod
+    def from_bytes_int(value):
+        return int.from_bytes(value, 'little', signed=True)
+
+    @staticmethod
+    def from_bytes_uint(value):
+        return int.from_bytes(value, 'little')
+
+    @staticmethod
+    def from_bytes_bool(value):
+        return int.from_bytes(value, 'little') != 0
+
+    @staticmethod
+    def from_bytes_float(value):
+        if len(value) == 4:
+            return struct.unpack('<f', value)[0]
+        elif len(value) == 8:
+            return struct.unpack('<d', value)[0]
+        else:
+            raise ValueError('value for float must be 4 or 8 bytes')
+
+    def to_bytes(self, value, length):
+        return getattr(self, 'to_bytes_{}'.format(self.name))(value, length)
+
+    @staticmethod
+    def to_bytes_bytes(value, length):
+        return value
+
+    @staticmethod
+    def to_bytes_int(value, length):
+        return value.to_bytes(length, 'little', signed=True)
+
+    @staticmethod
+    def to_bytes_uint(value, length):
+        return value.to_bytes(length, 'little')
+
+    @staticmethod
+    def to_bytes_bool(value, length):
+        if value:
+            value = 1
+        else:
+            value = 0
+        return value.to_bytes(length, 'little')
+
+    @staticmethod
+    def to_bytes_float(value, length):
+        if length == 4:
+            return struct.pack('<f', value)
+        elif length == 8:
+            return struct.pack('<d', value)
+        else:
+            raise ValueError('length must be 4 or 8 for float')
+
+
+def _issubclass(sub, parent):
+    return isinstance(sub, type) and issubclass(sub, parent)
+
+
+class Field(namedtuple('FieldBase', ('name', 'bits', 'type'))):
+    def __new__(cls, name, bits=0, type=FieldType.bytes):
+        if _issubclass(type, Bitfield):
+            bits = type.total_bytes * 8
+        elif not isinstance(type, FieldType):
+            raise TypeError('type must be FieldType or Bitfield')
+        if bits <= 0:
+            raise ValueError('bits must be greater than 0')
+        return super().__new__(cls, name, bits, type)
 
 
 class BitfieldMeta(type):
@@ -106,29 +186,16 @@ class Bitfield(object, metaclass=BitfieldMeta):
         )
         return '<{} {}>'.format(self.__class__.__name__, ' '.join(vals))
 
-    def __getattr__(self, name):
-        return self._data[name]
-
     def to_bytes(self):
         # gets replaced with _to_bytes_simple or _to_bytes_full by meta class
         pass
 
     def _get_value(self, field):
+        num_bytes = (field.bits - 1) // 8 + 1
         if field.name is RESERVED:
-            value = 0
+            return b'\x00' * num_bytes
         else:
-            value = self._data[field.name]
-        if not isinstance(value, bytes):
-            if isinstance(value, Bitfield):
-                value = value.to_bytes()
-            elif isinstance(value, str):
-                value = value.encode('utf8')
-            elif isinstance(value, int):
-                value = value.to_bytes((field.bits - 1) // 8 + 1, 'little')
-            else:
-                value = bytes(value)
-
-        return value
+            return field.type.to_bytes(self._data[field.name], num_bytes)
 
     def _to_bytes_simple(self):
         return b''.join(self._get_value(field) for field in self.fields)
@@ -162,32 +229,22 @@ class Bitfield(object, metaclass=BitfieldMeta):
 
     @classmethod
     def _from_bytes_simple(cls, data):
-        bytes_data = iter(bytes(data))
         if len(data) < cls.total_bytes:
             raise ValueError('missing data')
+        bytes_data = iter(bytes(data))
         bitfield_data = {}
         for field in cls.fields:
-            num_bytes = field.bits // 8
-            field_bytes = bytes(islice(bytes_data, num_bytes))
             if field.name is not RESERVED:
-                if issubclass(field.pytype, float):
-                    bitfield_data[field.name] = field.pytype(struct.unpack('<f', field_bytes)[0])
-                elif issubclass(field.pytype, int):
-                    bitfield_data[field.name] = field.pytype.from_bytes(field_bytes, 'little')
-                elif issubclass(field.pytype, str):
-                    bitfield_data[field.name] = field_bytes.decode('utf8').rstrip('\x00')
-                elif issubclass(field.pytype, Bitfield):
-                    bitfield_data[field.name] = field.pytype.from_bytes(field_bytes)
-                else:
-                    bitfield_data[field.name] = field.pytype(field_bytes)
+                field_bytes = bytes(islice(bytes_data, field.bits // 8))
+                bitfield_data[field.name] = field.type.from_bytes(field_bytes)
 
         return cls(**bitfield_data)
 
     @classmethod
     def _from_bytes_full(cls, data):
-        data = bytes(data)
         if len(data) < cls.total_bytes:
             raise ValueError('missing data')
+        bytes_data = iter(bytes(data))
         bitfield_data = {}
         packed_bits = 0
         pack = []
@@ -196,28 +253,14 @@ class Bitfield(object, metaclass=BitfieldMeta):
             pack.append(field)
 
             if packed_bits % 8 == 0:
-                num_bytes = packed_bits // 8
-                value = int.from_bytes(data[:num_bytes], 'little')
-                data = data[num_bytes:]
+                pack_bytes = bytes(islice(bytes_data, packed_bits // 8))
+                value = int.from_bytes(pack_bytes, 'little')
                 for pack_field in reversed(pack):
                     if pack_field.name is not RESERVED:
-                        val = value & ((1 << pack_field.bits) - 1)
-                        if issubclass(pack_field.pytype, float):
-                            bitfield_data[pack_field.name] = pack_field.pytype(
-                                struct.unpack('<f', val.to_bytes(4, 'little'))[0]
-                            )
-                        elif issubclass(pack_field.pytype, int):
-                            bitfield_data[pack_field.name] = pack_field.pytype(val)
-                        else:
-                            bytesval = val.to_bytes((pack_field.bits - 1) // 8 + 1, 'little')
-                            if issubclass(pack_field.pytype, str):
-                                bitfield_data[pack_field.name] = \
-                                    bytesval.decode('utf8').rstrip('\x00')
-                            if issubclass(pack_field.pytype, Bitfield):
-                                bitfield_data[pack_field.name] = \
-                                    pack_field.pytype.from_bytes(bytesval)
-                            else:
-                                bitfield_data[pack_field.name] = pack_field.pytype(bytesval)
+                        int_val = value & ((1 << pack_field.bits) - 1)
+                        num_bytes = (pack_field.bits - 1) // 8 + 1
+                        bytes_val = int_val.to_bytes(num_bytes, 'little')
+                        bitfield_data[pack_field.name] = pack_field.type.from_bytes(bytes_val)
 
                     value >>= pack_field.bits
 
@@ -240,30 +283,30 @@ class Bitfield(object, metaclass=BitfieldMeta):
 
 class Frame(Bitfield):
     fields = [
-        Field('size', 16, int),
-        Field('origin', 2, int),
-        Field('tagged', 1, int),
-        Field('addressable', 1, int),
-        Field('protocol', 12, int),
-        Field('source', 32, bytes),
+        Field('size', 16, FieldType.uint),
+        Field('origin', 2, FieldType.uint),
+        Field('tagged', 1, FieldType.bool),
+        Field('addressable', 1, FieldType.bool),
+        Field('protocol', 12, FieldType.uint),
+        Field('source', 32, FieldType.bytes),
     ]
 
 
 class FrameAddress(Bitfield):
     fields = [
-        Field('target', 64, bytes),
+        Field('target', 64, FieldType.bytes),
         Field(RESERVED, 48),
         Field(RESERVED, 6),
-        Field('ack_required', 1, int),
-        Field('res_required', 1, int),
-        Field('sequence', 8, int),
+        Field('ack_required', 1, FieldType.bool),
+        Field('res_required', 1, FieldType.bool),
+        Field('sequence', 8, FieldType.uint),
     ]
 
 
 class ProtocolHeader(Bitfield):
     fields = [
         Field(RESERVED, 64),
-        Field('type', 16, int),
+        Field('type', 16, FieldType.uint),
         Field(RESERVED, 16),
     ]
 
@@ -274,9 +317,9 @@ class ProtocolHeader(Bitfield):
 
 class Header(Bitfield):
     fields = [
-        Field('frame', Frame.total_bytes * 8, Frame),
-        Field('frame_address', FrameAddress.total_bytes * 8, FrameAddress),
-        Field('protocol_header', ProtocolHeader.total_bytes * 8, ProtocolHeader),
+        Field('frame', type=Frame),
+        Field('frame_address', type=FrameAddress),
+        Field('protocol_header', type=ProtocolHeader),
     ]
 
     @property
@@ -286,101 +329,101 @@ class Header(Bitfield):
 
 class StateService(Bitfield):
     fields = [
-        Field('service', 8, int),
-        Field('port', 32, int),
+        Field('service', 8, FieldType.uint),
+        Field('port', 32, FieldType.uint),
     ]
 
 
 class StateDeviceInfo(Bitfield):
     fields = [
-        Field('signal', 32, float),
-        Field('tx', 32, int),
-        Field('rx', 32, int),
+        Field('signal', 32, FieldType.float),
+        Field('tx', 32, FieldType.uint),
+        Field('rx', 32, FieldType.uint),
         Field(RESERVED, 16),
     ]
 
 
 class StateFirmware(Bitfield):
     fields = [
-        Field('build', 64, int),
+        Field('build', 64, FieldType.uint),
         Field(RESERVED, 64),
-        Field('version', 32, int),
+        Field('version', 32, FieldType.uint),
     ]
 
 
 class StatePower(Bitfield):
     fields = [
-        Field('level', 16, int),
+        Field('level', 16, FieldType.uint),
     ]
 
 
 class StateLabel(Bitfield):
     fields = [
-        Field('label', 32*8, str),
+        Field('label', 32*8, FieldType.bytes),
     ]
 
 
 class StateVersion(Bitfield):
     fields = [
-        Field('vendor', 32, int),
-        Field('product', 32, int),
-        Field('version', 32, int),
+        Field('vendor', 32, FieldType.uint),
+        Field('product', 32, FieldType.uint),
+        Field('version', 32, FieldType.uint),
     ]
 
 
 class StateInfo(Bitfield):
     fields = [
-        Field('time', 64, int),
-        Field('uptime', 64, int),
-        Field('downtime', 64, int),
+        Field('time', 64, FieldType.uint),
+        Field('uptime', 64, FieldType.uint),
+        Field('downtime', 64, FieldType.uint),
     ]
 
 
 class StateLocation(Bitfield):
     fields = [
-        Field('location', 16*8, bytes),
-        Field('label', 32*8, str),
-        Field('updated_at', 64, int),
+        Field('location', 16*8, FieldType.bytes),
+        Field('label', 32*8, FieldType.bytes),
+        Field('updated_at', 64, FieldType.uint),
     ]
 
 
 class StateGroup(Bitfield):
     fields = [
-        Field('group', 16*8, bytes),
-        Field('label', 32*8, str),
-        Field('updated_at', 64, int),
+        Field('group', 16*8, FieldType.bytes),
+        Field('label', 32*8, FieldType.bytes),
+        Field('updated_at', 64, FieldType.uint),
     ]
 
 
 class EchoPacket(Bitfield):
     fields = [
-        Field('payload', 64*8, bytes),
+        Field('payload', 64*8, FieldType.bytes),
     ]
 
 
 class HSBK(Bitfield):
     fields = [
-        Field('hue', 16, int),
-        Field('saturation', 16, int),
-        Field('brightness', 16, int),
-        Field('kelvin', 16, int),
+        Field('hue', 16, FieldType.uint),
+        Field('saturation', 16, FieldType.uint),
+        Field('brightness', 16, FieldType.uint),
+        Field('kelvin', 16, FieldType.uint),
     ]
 
 
 class LightSetColor(Bitfield):
     fields = [
         Field(RESERVED, 8),
-        Field('color', HSBK),
-        Field('duration', 32, int),
+        Field('color', type=HSBK),
+        Field('duration', 32, FieldType.uint),
     ]
 
 
 class LightState(Bitfield):
     fields = [
-        Field('color', HSBK.total_bytes * 8, HSBK),
+        Field('color', type=HSBK),
         Field(RESERVED, 16),
-        Field('power', 16, int),
-        Field('label', 32*8, str),
+        Field('power', 16, FieldType.uint),
+        Field('label', 32*8, FieldType.bytes),
         Field(RESERVED, 64),
     ]
 
