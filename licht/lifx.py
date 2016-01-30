@@ -563,33 +563,32 @@ class LifxBackend(Backend):
         sock.settimeout(self.timeout)
         return sock
 
-    @with_socket
-    def discover_lights(self, sock):
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, True)
-        sock.bind(('0.0.0.0', LIFX_PORT))
+    def discover_lights(self):
+        with self._get_socket() as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, True)
+            sock.bind(('0.0.0.0', LIFX_PORT))
 
-        broadcast_addr = ('<broadcast>', LIFX_PORT)
+            broadcast_addr = ('<broadcast>', LIFX_PORT)
 
-        light_addrs = set()
+            light_addrs = set()
 
-        for i in range(self.tries):
-            sock.sendto(
-                self._make_packet(self.source_id, None, i, MessageType.GetService),
-                broadcast_addr
-            )
+            for i in range(self.tries):
+                sock.sendto(
+                    self._make_packet(self.source_id, None, i, MessageType.GetService),
+                    broadcast_addr
+                )
 
-            while True:
-                try:
-                    data, (host, port) = sock.recvfrom(4096)
-                except socket.timeout:
-                    break
-                service = self._parse_response(data, MessageType.StateService)
-                if service is not None:
-                    light_addrs.add((host, service['port']))
-
-        sock.close()
-
-        return [LifxLight(self, addr) for addr in light_addrs]
+                while True:
+                    try:
+                        data, (host, port) = sock.recvfrom(4096)
+                    except socket.timeout:
+                        break
+                    service = self._parse_response(data, MessageType.StateService)
+                    if service is not None:
+                        addr = (host, service['port'])
+                        if addr not in light_addrs:
+                            yield LifxLight(self, addr)
+                            light_addrs.add(addr)
 
     @with_socket
     def _get_state_packet(self, sock, addr, get_type, state_type):
