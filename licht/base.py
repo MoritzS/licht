@@ -54,6 +54,9 @@ class Backend(object):
     def get_power(self, light):
         pass
 
+    def set_power(self, light, power):
+        pass
+
     def get_color(self, light):
         pass
 
@@ -65,6 +68,15 @@ class Light(object):
 
     def get_power(self):
         return self.backend.get_power(self)
+
+    def set_power(self, power):
+        return self.backend.set_power(self, power)
+
+    def poweron(self):
+        return self.set_power(LightPower.ON)
+
+    def poweroff(self):
+        return self.set_power(LightPower.OFF)
 
     def get_color(self):
         return self.backend.get_color(self)

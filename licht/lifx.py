@@ -684,6 +684,51 @@ class LifxBackend(Backend):
 
         return False
 
+    @with_socket
+    def _get_set_packet(self, sock, addr, set_packet, state_type=None):
+        if state_type is None:
+            res = False
+        else:
+            res = True
+
+        ack = False
+        response = None
+
+        for i in range(self.tries):
+            packet = self._make_packet(self.source_id, None, i, set_packet, True, res)
+            sock.sendto(packet, addr)
+            while True:
+                try:
+                    data, from_addr = sock.recvfrom(4096)
+                except socket.timeout:
+                    break
+                if from_addr != addr:
+                    continue
+                header = Header.from_bytes(data)
+                if header.payload_type is MessageType.Acknowledgement:
+                    ack = True
+                elif res and header.payload_type is state_type:
+                    response_data = data[Header.total_bytes:]
+                    response = state_type.get_bitfield().from_bytes(response_data)
+
+                if ack and (not res or response is not None):
+                    return response
+
+    def _set_power(self, addr, level):
+        packet = SetPower(level)
+        return self._get_set_packet(addr, packet, MessageType.StatePower)
+
+    def set_power(self, light, power):
+        if power is LightPower.OFF:
+            level = 0
+        else:
+            level = 65535
+        power = self._set_power(light.addr, level)
+        if power['level'] == 0:
+            return LightPower.OFF
+        else:
+            return LightPower.ON
+
     def get_power(self, light):
         power = self._get_power(light.addr)
         if power == 0:
