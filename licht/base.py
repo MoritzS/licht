@@ -60,6 +60,12 @@ class Backend(object):
     def get_color(self, light):
         pass
 
+    def set_color(self, light, color):
+        return self.fade_color(light, color, 0)
+
+    def fade_color(self, light, color, ms):
+        pass
+
 
 class Light(object):
     def __init__(self, backend, addr):
@@ -80,3 +86,9 @@ class Light(object):
 
     def get_color(self):
         return self.backend.get_color(self)
+
+    def set_color(self, color):
+        return self.backend.set_color(self, color)
+
+    def fade_color(self, color, ms):
+        return self.backend.fade_color(self, color, ms)

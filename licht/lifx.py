@@ -206,7 +206,11 @@ class Bitfield(object, metaclass=BitfieldMeta):
         if field.name is RESERVED:
             return b'\x00' * num_bytes
         else:
-            return field.type.to_bytes(self._data[field.name], num_bytes)
+            value = self._data[field.name]
+            if isinstance(value, Bitfield):
+                return value.to_bytes()
+            else:
+                return field.type.to_bytes(value, num_bytes)
 
     def _to_bytes_simple(self):
         return b''.join(self._get_value(field) for field in self.fields)
@@ -558,6 +562,14 @@ class LifxBackend(Backend):
     def _convert_string(bytestring):
         return bytestring.rstrip(b'\x00').decode('utf-8')
 
+    @staticmethod
+    def _to_color(hsbk):
+        h, s, b = hsbk['hue'], hsbk['saturation'], hsbk['brightness']
+        h = 360 * h / 65535
+        s = s / 65535
+        b = b / 65535
+        return LightColor(h, s, b)
+
     def _get_socket(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(self.timeout)
@@ -718,6 +730,17 @@ class LifxBackend(Backend):
         packet = SetPower(level)
         return self._get_set_packet(addr, packet, MessageType.StatePower)
 
+    def _set_color(self, addr, h, s, b, ms):
+        packet = LightSetColor(HSBK(h, s, b, 3500), ms)
+        return self._get_set_packet(addr, packet, MessageType.LightState)
+
+    def get_power(self, light):
+        power = self._get_power(light.addr)
+        if power == 0:
+            return LightPower.OFF
+        else:
+            return LightPower.ON
+
     def set_power(self, light, power):
         if power is LightPower.OFF:
             level = 0
@@ -729,20 +752,17 @@ class LifxBackend(Backend):
         else:
             return LightPower.ON
 
-    def get_power(self, light):
-        power = self._get_power(light.addr)
-        if power == 0:
-            return LightPower.OFF
-        else:
-            return LightPower.ON
-
     def get_color(self, light):
-        color = self._get_light_state(light.addr)['color']
-        h, s, b = color['hue'], color['saturation'], color['brightness']
-        h = 360 * h / 65535
-        s = s / 65535
-        b = b / 65535
-        return LightColor(h, s, b)
+        hsbk = self._get_light_state(light.addr)['color']
+        return self._to_color(hsbk)
+
+    def fade_color(self, light, color, ms):
+        h, s, b = color
+        h = int(h * 65535 / 360)
+        s = int(s * 65535)
+        b = int(b * 65535)
+        state = self._set_color(light.addr, h, s, b, ms)
+        return self._to_color(state['color'])
 
 
 # don't need with_socket anymore
