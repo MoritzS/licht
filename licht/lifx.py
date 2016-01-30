@@ -4,7 +4,7 @@ import random
 import socket
 import struct
 from collections import namedtuple
-from enum import Enum
+from enum import Enum, IntEnum
 from itertools import islice
 
 from .base import Backend, Light, LightColor, LightPower
@@ -13,43 +13,51 @@ from .base import Backend, Light, LightColor, LightPower
 LIFX_PORT = 56700
 
 
-MESSAGE_TYPES = {
-    2: 'GetService',
-    3: 'StateService',
-    12: 'GetHostInfo',
-    13: 'StateHostInfo',
-    14: 'GetHostFirmware',
-    15: 'StateHostFirmware',
-    16: 'GetWifiInfo',
-    17: 'StateWifiInfo',
-    18: 'GetWifiFirmware',
-    19: 'StateWifiFirmware',
-    20: 'GetPower',
-    21: 'SetPower',
-    22: 'StatePower',
-    23: 'GetLabel',
-    24: 'SetLabel',
-    25: 'StateLabel',
-    32: 'GetVersion',
-    33: 'StateVersion',
-    34: 'GetInfo',
-    35: 'StateInfo',
-    45: 'Acknowledgement',
-    48: 'GetLocation',
-    50: 'StateLocation',
-    51: 'GetGroup',
-    53: 'StateGroup',
-    58: 'EchoRequest',
-    59: 'EchoResponse',
-    101: 'Light:Get',
-    102: 'Light:SetColor',
-    107: 'Light:State',
-    116: 'Light:GetPower',
-    117: 'Light:SetPower',
-    118: 'Light:StatePower',
-}
+class MessageType(IntEnum):
+    GetService = 2
+    StateService = 3
+    GetHostInfo = 12
+    StateHostInfo = 13
+    GetHostFirmware = 14
+    StateHostFirmware = 15
+    GetWifiInfo = 16
+    StateWifiInfo = 17
+    GetWifiFirmware = 18
+    StateWifiFirmware = 19
+    GetPower = 20
+    SetPower = 21
+    StatePower = 22
+    GetLabel = 23
+    SetLabel = 24
+    StateLabel = 25
+    GetVersion = 32
+    StateVersion = 33
+    GetInfo = 34
+    StateInfo = 35
+    Acknowledgement = 45
+    GetLocation = 48
+    StateLocation = 50
+    GetGroup = 51
+    StateGroup = 53
+    EchoRequest = 58
+    EchoResponse = 59
+    LightGet = 101
+    LightSetColor = 102
+    LightState = 107
+    LightGetPower = 116
+    LightSetPower = 117
+    LightStatePower = 118
 
-MESSAGE_TYPES_REVERSE = {val: key for key, val in MESSAGE_TYPES.items()}
+    def register(self, cls):
+        cls.message_type = self
+        self._bitfields[self] = cls
+        return cls
+
+    def get_bitfield(self):
+        return self._bitfields.get(self)
+
+
+MessageType._bitfields = {}
 
 
 RESERVED = object()
@@ -141,29 +149,30 @@ class Field(namedtuple('FieldBase', ('name', 'bits', 'type'))):
 
 class BitfieldMeta(type):
     def __new__(mcs, name, bases, namespace):
-        if 'fields' not in namespace:
-            raise TypeError('Bitfield class needs fields attribute')
+        if 'fields' in namespace:
+            namespace['field_key_list'] = [
+                field.name for field in namespace['fields']
+                if field.name is not RESERVED
+            ]
+            namespace['field_keys'] = set(namespace['field_key_list'])
+            namespace['total_bytes'] = sum(f.bits for f in namespace['fields']) // 8
 
-        namespace['field_key_list'] = [
-            field.name for field in namespace['fields']
-            if field.name is not RESERVED
-        ]
-        namespace['field_keys'] = set(namespace['field_key_list'])
-        namespace['total_bytes'] = sum(f.bits for f in namespace['fields']) // 8
+            cls = super().__new__(mcs, name, bases, namespace)
 
-        cls = super().__new__(mcs, name, bases, namespace)
+            if all(f.bits % 8 == 0 for f in namespace['fields']):
+                cls.to_bytes = cls._to_bytes_simple
+                cls.from_bytes = cls._from_bytes_simple
+            else:
+                cls.to_bytes = cls._to_bytes_full
+                cls.from_bytes = cls._from_bytes_full
 
-        if all(f.bits % 8 == 0 for f in namespace['fields']):
-            cls.to_bytes = cls._to_bytes_simple
-            cls.from_bytes = cls._from_bytes_simple
+            return cls
         else:
-            cls.to_bytes = cls._to_bytes_full
-            cls.from_bytes = cls._from_bytes_full
-
-        return cls
+            return super().__new__(mcs, name, bases, namespace)
 
 
 class Bitfield(object, metaclass=BitfieldMeta):
+    message_type = None
     fields = []
 
     def __init__(self, *args, **kwargs):
@@ -313,8 +322,12 @@ class ProtocolHeader(Bitfield):
     ]
 
     @property
-    def message_type(self):
-        return MESSAGE_TYPES[self['type']]
+    def payload_type(self):
+        ptype = self['type']
+        try:
+            return MessageType(ptype)
+        except ValueError:
+            return None
 
 
 class Header(Bitfield):
@@ -325,10 +338,11 @@ class Header(Bitfield):
     ]
 
     @property
-    def message_type(self):
-        return MESSAGE_TYPES[self['protocol_header']['type']]
+    def payload_type(self):
+        return self['protocol_header'].payload_type
 
 
+@MessageType.StateService.register
 class StateService(Bitfield):
     fields = [
         Field('service', 8, FieldType.uint),
@@ -345,6 +359,16 @@ class StateDeviceInfo(Bitfield):
     ]
 
 
+@MessageType.StateHostInfo.register
+class StateHostInfo(StateDeviceInfo):
+    pass
+
+
+@MessageType.StateWifiInfo.register
+class StateWifiInfo(StateDeviceInfo):
+    pass
+
+
 class StateFirmware(Bitfield):
     fields = [
         Field('build', 64, FieldType.uint),
@@ -353,18 +377,38 @@ class StateFirmware(Bitfield):
     ]
 
 
+@MessageType.StateHostFirmware.register
+class StateHostFirmware(StateFirmware):
+    pass
+
+
+@MessageType.StateWifiFirmware.register
+class StateWifiFirmware(StateFirmware):
+    pass
+
+
+@MessageType.SetPower.register
+class SetPower(Bitfield):
+    fields = [
+        Field('level', 16, FieldType.uint),
+    ]
+
+
+@MessageType.StatePower.register
 class StatePower(Bitfield):
     fields = [
         Field('level', 16, FieldType.uint),
     ]
 
 
+@MessageType.StateLabel.register
 class StateLabel(Bitfield):
     fields = [
         Field('label', 32 * 8, FieldType.bytes),
     ]
 
 
+@MessageType.StateVersion.register
 class StateVersion(Bitfield):
     fields = [
         Field('vendor', 32, FieldType.uint),
@@ -373,6 +417,7 @@ class StateVersion(Bitfield):
     ]
 
 
+@MessageType.StateInfo.register
 class StateInfo(Bitfield):
     fields = [
         Field('time', 64, FieldType.uint),
@@ -381,6 +426,7 @@ class StateInfo(Bitfield):
     ]
 
 
+@MessageType.StateLocation.register
 class StateLocation(Bitfield):
     fields = [
         Field('location', 16 * 8, FieldType.bytes),
@@ -389,6 +435,7 @@ class StateLocation(Bitfield):
     ]
 
 
+@MessageType.StateGroup.register
 class StateGroup(Bitfield):
     fields = [
         Field('group', 16 * 8, FieldType.bytes),
@@ -403,6 +450,16 @@ class EchoPacket(Bitfield):
     ]
 
 
+@MessageType.EchoRequest.register
+class EchoRequest(EchoPacket):
+    pass
+
+
+@MessageType.EchoResponse.register
+class EchoResponse(EchoPacket):
+    pass
+
+
 class HSBK(Bitfield):
     fields = [
         Field('hue', 16, FieldType.uint),
@@ -412,6 +469,7 @@ class HSBK(Bitfield):
     ]
 
 
+@MessageType.LightSetColor.register
 class LightSetColor(Bitfield):
     fields = [
         Field(RESERVED, 8),
@@ -420,6 +478,7 @@ class LightSetColor(Bitfield):
     ]
 
 
+@MessageType.LightState.register
 class LightState(Bitfield):
     fields = [
         Field('color', type=HSBK),
@@ -453,26 +512,39 @@ class LifxBackend(Backend):
         return LifxLight(self, addr)
 
     @staticmethod
-    def _make_packet(source_id, target_addr, seq, msg_type, payload=None):
+    def _make_packet(source_id, target_addr, seq, payload, ack=False, res=False):
         if target_addr is None:
             target_addr = b'\x00'
             tagged = 1
         else:
             tagged = 0
-        if not isinstance(msg_type, int):
-            msg_type = MESSAGE_TYPES_REVERSE[msg_type]
-        if payload is None:
+        if isinstance(payload, MessageType):
+            msg_type = payload
             payload = b''
         elif isinstance(payload, Bitfield):
+            msg_type = payload.message_type
             payload = payload.to_bytes()
+        else:
+            raise ValueError('payload must be MessageType or Bitfield')
         frame = Frame(0, 0, tagged, 1, 1024, source_id)
-        faddr = FrameAddress(target_addr, 0, 0, seq)
-        header = ProtocolHeader(msg_type)
+        faddr = FrameAddress(target_addr, int(ack), int(res), seq)
+        header = ProtocolHeader(int(msg_type))
 
         size = frame.total_bytes + faddr.total_bytes + header.total_bytes + len(payload)
         frame['size'] = size
 
         return frame.to_bytes() + faddr.to_bytes() + header.to_bytes() + payload
+
+    @staticmethod
+    def _parse_response(data, expected_type):
+        header = Header.from_bytes(data)
+        if header.payload_type is not expected_type:
+            return None
+        response = data[Header.total_bytes:]
+        try:
+            return expected_type.get_bitfield().from_bytes(response)
+        except ValueError:
+            return None
 
     @staticmethod
     def _convert_datetime(src_ns):
@@ -502,7 +574,7 @@ class LifxBackend(Backend):
 
         for i in range(self.tries):
             sock.sendto(
-                self._make_packet(self.source_id, None, i, 'GetService'),
+                self._make_packet(self.source_id, None, i, MessageType.GetService),
                 broadcast_addr
             )
 
@@ -511,20 +583,16 @@ class LifxBackend(Backend):
                     data, (host, port) = sock.recvfrom(4096)
                 except socket.timeout:
                     break
-                header = Header.from_bytes(data)
-                if header.message_type != 'StateService':
-                    continue
-                payload = data[Header.total_bytes:]
-                service = StateService.from_bytes(payload)
-
-                light_addrs.add((host, service['port']))
+                service = self._parse_response(data, MessageType.StateService)
+                if service is not None:
+                    light_addrs.add((host, service['port']))
 
         sock.close()
 
         return [LifxLight(self, addr) for addr in light_addrs]
 
     @with_socket
-    def _get_state_packet(self, sock, addr, get_type, state_type, state_cls):
+    def _get_state_packet(self, sock, addr, get_type, state_type):
         for i in range(self.tries):
             sock.sendto(self._make_packet(self.source_id, None, i, get_type), addr)
             while True:
@@ -534,24 +602,22 @@ class LifxBackend(Backend):
                     break
                 if from_addr != addr:
                     continue
-                header = Header.from_bytes(data)
-                if header.message_type != state_type:
-                    continue
-                payload = data[Header.total_bytes:]
-                return state_cls.from_bytes(payload)
+                payload = self._parse_response(data, state_type)
+                if payload is not None:
+                    return payload
 
     def _get_device_info(self, addr, get, state):
-        info = self._get_state_packet(addr, get, state, StateDeviceInfo)
+        info = self._get_state_packet(addr, get, state)
         return info['signal'], info['tx'], info['rx']
 
     def _get_host_info(self, addr):
-        return self._get_device_info(addr, 'GetHostInfo', 'StateHostInfo')
+        return self._get_device_info(addr, MessageType.GetHostInfo, MessageType.StateHostInfo)
 
     def _get_wifi_info(self, addr):
-        return self._get_device_info(addr, 'GetWifiInfo', 'StateWifiInfo')
+        return self._get_device_info(addr, MessageType.GetWifiInfo, MessageType.StateWifiInfo)
 
     def _get_firmware(self, addr, get, state):
-        firmware = self._get_state_packet(addr, get, state, StateFirmware)
+        firmware = self._get_state_packet(addr, get, state)
         version = firmware['version']
         build = self._convert_datetime(firmware['build'])
         major = version >> 16
@@ -559,49 +625,53 @@ class LifxBackend(Backend):
         return build, major, minor
 
     def _get_host_firmware(self, addr):
-        return self._get_firmware(addr, 'GetHostFirmware', 'StateHostFirmware')
+        return self._get_firmware(addr, MessageType.GetHostFirmware, MessageType.StateHostFirmware)
 
     def _get_wifi_firmware(self, addr):
-        return self._get_firmware(addr, 'GetWifiFirmware', 'StateWifiFirmware')
+        return self._get_firmware(addr, MessageType.GetWifiFirmware, MessageType.StateWifiFirmware)
 
     def _get_power(self, addr):
-        power = self._get_state_packet(addr, 'GetPower', 'StatePower', StatePower)
+        power = self._get_state_packet(addr, MessageType.GetPower, MessageType.StatePower)
         return power['level']
 
     def _get_label(self, addr):
-        label = self._get_state_packet(addr, 'GetLabel', 'StateLabel', StateLabel)
+        label = self._get_state_packet(addr, MessageType.GetLabel, MessageType.StateLabel)
         return self._convert_string(label['label'])
 
     def _get_version(self, addr):
-        version = self._get_state_packet(addr, 'GetVersion', 'StateVersion', StateVersion)
+        version = self._get_state_packet(addr, MessageType.GetVersion, MessageType.StateVersion)
         return version['vendor'], version['product'], version['version']
 
     def _get_info(self, addr):
-        info = self._get_state_packet(addr, 'GetInfo', 'StateInfo', StateInfo)
+        info = self._get_state_packet(addr, MessageType.GetInfo, MessageType.StateInfo)
         time = self._convert_datetime(info['time'])
         uptime = self._convert_timedelta(info['uptime'])
         downtime = self._convert_timedelta(info['downtime'])
         return time, uptime, downtime
 
     def _get_location(self, addr):
-        loc = self._get_state_packet(addr, 'GetLocation', 'StateLocation', StateLocation)
+        loc = self._get_state_packet(addr, MessageType.GetLocation, MessageType.StateLocation)
         label = self._convert_string(loc['label'])
         updated_at = self._convert_datetime(loc['updated_at'])
         return loc['location'], label, updated_at
 
     def _get_group(self, addr):
-        group = self._get_state_packet(addr, 'GetGroup', 'StateGroup', StateGroup)
+        group = self._get_state_packet(addr, MessageType.GetGroup, MessageType.StateGroup)
         label = self._convert_string(group['label'])
         updated_at = self._convert_datetime(group['updated_at'])
         return group['group'], label, updated_at
 
+    def _get_light_state(self, addr):
+        state = self._get_state_packet(addr, MessageType.LightGet, MessageType.LightState)
+        return state
+
     @with_socket
     def _ping(self, sock, addr):
-        payload = bytes([random.getrandbits(8) for _ in range(EchoPacket.total_bytes)])
+        payload = bytes([random.getrandbits(8) for _ in range(EchoRequest.total_bytes)])
 
         for i in range(self.tries):
-            packet = EchoPacket(payload=payload)
-            sock.sendto(self._make_packet(self.source_id, None, i, 'EchoRequest', packet), addr)
+            packet = EchoRequest(payload=payload)
+            sock.sendto(self._make_packet(self.source_id, None, i, packet), addr)
             while True:
                 try:
                     data, from_addr = sock.recvfrom(4096)
@@ -609,18 +679,11 @@ class LifxBackend(Backend):
                     break
                 if from_addr != addr:
                     continue
-                header = Header.from_bytes(data)
-                if header.message_type != 'EchoResponse':
-                    continue
-                response = EchoPacket.from_bytes(data[Header.total_bytes:])
-                if response['payload'] == payload:
+                response = self._parse_response(data, MessageType.EchoResponse)
+                if response is not None and response['payload'] == payload:
                     return True
 
         return False
-
-    def _get_light_state(self, addr):
-        state = self._get_state_packet(addr, 'Light:Get', 'Light:State', LightState)
-        return state
 
     def get_power(self, light):
         power = self._get_power(light.addr)
