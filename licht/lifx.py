@@ -229,8 +229,8 @@ class Bitfield(object, metaclass=BitfieldMeta):
         bytes_data = iter(bytes(data))
         bitfield_data = {}
         for field in cls.fields:
+            field_bytes = bytes(islice(bytes_data, field.bits // 8))
             if field.name is not RESERVED:
-                field_bytes = bytes(islice(bytes_data, field.bits // 8))
                 bitfield_data[field.name] = field.type.from_bytes(field_bytes)
 
         return cls(**bitfield_data)
