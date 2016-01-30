@@ -44,6 +44,9 @@ class LightColor(namedtuple('LightColorBase', ['hue', 'saturation', 'brightness'
         return (self._float_to_rgb(r), self._float_to_rgb(g), self._float_to_rgb(b))
 
 
+LightWhite = namedtuple('LightWhite', ['brightness', 'kelvin'])
+
+
 class Backend(object):
     def get_light(self, addr):
         return Light(self, addr)

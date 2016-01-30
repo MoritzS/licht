@@ -7,7 +7,7 @@ from collections import namedtuple
 from enum import Enum, IntEnum
 from itertools import islice
 
-from .base import Backend, Light, LightColor, LightPower
+from .base import Backend, Light, LightColor, LightPower, LightWhite
 
 
 LIFX_PORT = 56700
@@ -564,11 +564,17 @@ class LifxBackend(Backend):
 
     @staticmethod
     def _to_color(hsbk):
-        h, s, b = hsbk['hue'], hsbk['saturation'], hsbk['brightness']
-        h = 360 * h / 65535
-        s = s / 65535
-        b = b / 65535
-        return LightColor(h, s, b)
+        s, b = hsbk['saturation'], hsbk['brightness']
+        if s == 0:
+            b = b / 65535
+            k = hsbk['kelvin']
+            return LightWhite(b, k)
+        else:
+            h = hsbk['hue']
+            h = 360 * h / 65535
+            s = s / 65535
+            b = b / 65535
+            return LightColor(h, s, b)
 
     def _get_socket(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -730,8 +736,8 @@ class LifxBackend(Backend):
         packet = SetPower(level)
         return self._get_set_packet(addr, packet, MessageType.StatePower)
 
-    def _set_color(self, addr, h, s, b, ms):
-        packet = LightSetColor(HSBK(h, s, b, 3500), ms)
+    def _set_color(self, addr, h, s, b, k, ms):
+        packet = LightSetColor(HSBK(h, s, b, k), ms)
         return self._get_set_packet(addr, packet, MessageType.LightState)
 
     def get_power(self, light):
@@ -757,11 +763,16 @@ class LifxBackend(Backend):
         return self._to_color(hsbk)
 
     def fade_color(self, light, color, ms):
-        h, s, b = color
-        h = int(h * 65535 / 360)
-        s = int(s * 65535)
-        b = int(b * 65535)
-        state = self._set_color(light.addr, h, s, b, ms)
+        if isinstance(color, LightColor):
+            h, s, b = color
+            h = int(h * 65535 / 360)
+            s = int(s * 65535)
+            b = int(b * 65535)
+            state = self._set_color(light.addr, h, s, b, 3500, ms)
+        else:
+            b, k = color
+            b = int(b * 65535)
+            state = self._set_color(light.addr, 0, 0, b, k, ms)
         return self._to_color(state['color'])
 
 
