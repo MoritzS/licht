@@ -508,13 +508,6 @@ class LifxBackend(Backend):
         self.timeout = 3
         self.tries = 3
 
-    def get_light(self, addr):
-        if isinstance(addr, str):
-            addr = (addr, LIFX_PORT)
-        if not self._ping(addr):
-            raise ValueError('light not found')
-        return LifxLight(self, addr)
-
     @staticmethod
     def _make_packet(source_id, target_addr, seq, payload, ack=False, res=False):
         if target_addr is None:
@@ -546,7 +539,7 @@ class LifxBackend(Backend):
             return None
         response = data[Header.total_bytes:]
         try:
-            return expected_type.get_bitfield().from_bytes(response)
+            return header, expected_type.get_bitfield().from_bytes(response)
         except ValueError:
             return None
 
@@ -601,27 +594,44 @@ class LifxBackend(Backend):
                         data, (host, port) = sock.recvfrom(4096)
                     except socket.timeout:
                         break
-                    service = self._parse_response(data, MessageType.StateService)
-                    if service is not None:
-                        addr = (host, service['port'])
+                    response = self._parse_response(data, MessageType.StateService)
+                    if response is not None:
+                        header, service = response
+                        addr = (host, service['port'], header['frame_address']['target'])
                         if addr not in light_addrs:
-                            yield LifxLight(self, addr)
                             light_addrs.add(addr)
+                            yield LifxLight(self, addr)
 
     @with_socket
-    def _get_state_packet(self, sock, addr, get_type, state_type):
+    def _get_state_response(self, sock, addr, get_type, state_type):
+        host, port, target_addr = addr
         for i in range(self.tries):
-            sock.sendto(self._make_packet(self.source_id, None, i, get_type), addr)
+            sock.sendto(self._make_packet(self.source_id, target_addr, i, get_type), (host, port))
             while True:
                 try:
                     data, from_addr = sock.recvfrom(4096)
                 except socket.timeout:
                     break
-                if from_addr != addr:
+                if from_addr != (host, port):
                     continue
-                payload = self._parse_response(data, state_type)
-                if payload is not None:
-                    return payload
+                response = self._parse_response(data, state_type)
+                if response is not None:
+                    return response
+
+    def get_light(self, host, port=LIFX_PORT, target_addr=None):
+        if target_addr is None:
+            header, service = self._get_state_response(
+                (host, port, None), MessageType.GetService, MessageType.StateService
+            )
+            addr = host, service['port'], header['frame_address']['target']
+        else:
+            addr = host, port, target_addr
+            if not self._ping(addr):
+                raise ValueError('light not found')
+        return LifxLight(self, addr)
+
+    def _get_state_packet(self, addr, get_type, state_type):
+        return self._get_state_response(addr, get_type, state_type)[1]
 
     def _get_device_info(self, addr, get, state):
         info = self._get_state_packet(addr, get, state)
@@ -684,26 +694,28 @@ class LifxBackend(Backend):
 
     @with_socket
     def _ping(self, sock, addr):
+        host, port, target_addr = addr
         payload = bytes([random.getrandbits(8) for _ in range(EchoRequest.total_bytes)])
 
         for i in range(self.tries):
             packet = EchoRequest(payload=payload)
-            sock.sendto(self._make_packet(self.source_id, None, i, packet), addr)
+            sock.sendto(self._make_packet(self.source_id, target_addr, i, packet), (host, port))
             while True:
                 try:
                     data, from_addr = sock.recvfrom(4096)
                 except socket.timeout:
                     break
-                if from_addr != addr:
+                if from_addr != (host, port):
                     continue
                 response = self._parse_response(data, MessageType.EchoResponse)
-                if response is not None and response['payload'] == payload:
+                if response is not None and response[1]['payload'] == payload:
                     return True
 
         return False
 
     @with_socket
     def _get_set_packet(self, sock, addr, set_packet, state_type=None):
+        host, port, target_addr = addr
         if state_type is None:
             res = False
         else:
@@ -713,14 +725,14 @@ class LifxBackend(Backend):
         response = None
 
         for i in range(self.tries):
-            packet = self._make_packet(self.source_id, None, i, set_packet, True, res)
-            sock.sendto(packet, addr)
+            packet = self._make_packet(self.source_id, target_addr, i, set_packet, True, res)
+            sock.sendto(packet, (host, port))
             while True:
                 try:
                     data, from_addr = sock.recvfrom(4096)
                 except socket.timeout:
                     break
-                if from_addr != addr:
+                if from_addr != (host, port):
                     continue
                 header = Header.from_bytes(data)
                 if header.payload_type is MessageType.Acknowledgement:

@@ -48,8 +48,8 @@ LightWhite = namedtuple('LightWhite', ['brightness', 'kelvin'])
 
 
 class Backend(object):
-    def get_light(self, addr):
-        return Light(self, addr)
+    def get_light(self, *args, **kwargs):
+        return Light(self, *args, **kwargs)
 
     def discover_lights(self):
         pass
