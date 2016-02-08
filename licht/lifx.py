@@ -8,6 +8,7 @@ from enum import Enum, IntEnum
 from itertools import islice
 
 from .base import Backend, Light, LightColor, LightPower, LightWhite
+from .exceptions import LichtTimeoutError
 
 
 LIFX_PORT = 56700
@@ -618,6 +619,8 @@ class LifxBackend(Backend):
                 if response is not None:
                     return response
 
+        raise LichtTimeoutError()
+
     def get_light(self, host, port=LIFX_PORT, target_addr=None):
         if target_addr is None:
             header, service = self._get_state_response(
@@ -743,6 +746,8 @@ class LifxBackend(Backend):
 
                 if ack and (not res or response is not None):
                     return response
+
+        return LichtTimeoutError()
 
     def _set_power(self, addr, level):
         packet = SetPower(level)
