@@ -6,7 +6,7 @@ from enum import IntEnum
 
 from .base import Backend, Light, LightColor, LightPower, LightWhite
 from .exceptions import LichtTimeoutError
-from .utils import RESERVED, Bitfield, Field, FieldType
+from .utils import RESERVED, Bitfield, Field, FieldType, cache_method
 
 
 LIFX_PORT = 56700
@@ -559,48 +559,36 @@ class LifxBackend(Backend):
 del with_socket
 
 
-def cached_attr(name):
-    def decorator(meth):
-        @functools.wraps(meth)
-        def wrapper(self):
-            if name not in self._cached_attrs:
-                self._cached_attrs[name] = meth(self)
-            return self._cached_attrs[name]
-        return wrapper
-    return decorator
-
-
 class LifxLight(Light):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._cached_attrs = {}
 
     def get_host_info(self):
         return self.backend._get_host_info(self.addr)
 
-    @cached_attr('host_firmware')
+    @cache_method
     def get_host_firmware(self):
         return self.backend._get_host_firmware(self.addr)
 
     def get_wifi_info(self):
         return self.backend._get_wifi_info(self.addr)
 
-    @cached_attr('wifi_firmware')
+    @cache_method
     def get_wifi_firmware(self):
         return self.backend._get_wifi_firmware(self.addr)
 
-    @cached_attr('version')
+    @cache_method
     def get_version(self):
         return self.backend._get_version(self.addr)
 
     def get_times(self):
         return self.backend._get_info(self.addr)
 
-    @cached_attr('location')
+    @cache_method
     def get_location(self):
         return self.backend._get_location(self.addr)
 
-    @cached_attr('group')
+    @cache_method
     def get_group(self):
         return self.backend._get_group(self.addr)
 
@@ -609,7 +597,3 @@ class LifxLight(Light):
 
     def get_light_state(self):
         return self.backend._get_light_state(self.addr)
-
-
-# don't need cached_attr anymore
-del cached_attr

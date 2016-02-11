@@ -2,6 +2,8 @@ import math
 from collections import namedtuple
 from enum import Enum
 
+from .utils import cache_method
+
 
 class LightPower(Enum):
     OFF = 0
@@ -81,6 +83,7 @@ class Light(object):
     def __str__(self):
         return self.get_label()
 
+    @cache_method
     def get_label(self):
         return self.backend.get_label(self)
 
