@@ -3,10 +3,10 @@
 import struct
 import unittest
 
-from licht.lifx import RESERVED, Bitfield, Field, FieldType
+from licht.utils import RESERVED, Bitfield, Field, FieldType
 
 
-class LifxBitFieldTest(unittest.TestCase):
+class BitFieldTest(unittest.TestCase):
     def assertFieldsEqual(self, field, field_dict):
         for key, val in field_dict.items():
             self.assertEqual(field[key], val)
