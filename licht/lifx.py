@@ -594,6 +594,3 @@ class LifxLight(Light):
 
     def ping(self):
         return self.backend._ping(self.addr)
-
-    def get_light_state(self):
-        return self.backend._get_light_state(self.addr)
