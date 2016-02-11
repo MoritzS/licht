@@ -54,6 +54,9 @@ class Backend(object):
     def discover_lights(self):
         pass
 
+    def get_label(self, light):
+        return 'Light from {} with address {}'.format(self.__class__.__name__, light.addr)
+
     def get_power(self, light):
         pass
 
@@ -74,6 +77,12 @@ class Light(object):
     def __init__(self, backend, addr):
         self.backend = backend
         self.addr = addr
+
+    def __str__(self):
+        return self.get_label()
+
+    def get_label(self):
+        return self.backend.get_label(self)
 
     def get_power(self):
         return self.backend.get_power(self)

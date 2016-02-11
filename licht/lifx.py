@@ -426,10 +426,6 @@ class LifxBackend(Backend):
         power = self._get_state_packet(addr, MessageType.GetPower, MessageType.StatePower)
         return power['level']
 
-    def _get_label(self, addr):
-        label = self._get_state_packet(addr, MessageType.GetLabel, MessageType.StateLabel)
-        return self._convert_string(label['label'])
-
     def _get_version(self, addr):
         version = self._get_state_packet(addr, MessageType.GetVersion, MessageType.StateVersion)
         return version['vendor'], version['product'], version['version']
@@ -519,6 +515,10 @@ class LifxBackend(Backend):
         packet = LightSetColor(HSBK(h, s, b, k), ms)
         return self._get_set_packet(addr, packet, MessageType.LightState)
 
+    def get_label(self, light):
+        label = self._get_state_packet(light.addr, MessageType.GetLabel, MessageType.StateLabel)
+        return self._convert_string(label['label'])
+
     def get_power(self, light):
         power = self._get_power(light.addr)
         if power == 0:
@@ -588,10 +588,6 @@ class LifxLight(Light):
     @cached_attr('wifi_firmware')
     def get_wifi_firmware(self):
         return self.backend._get_wifi_firmware(self.addr)
-
-    @cached_attr('label')
-    def get_label(self):
-        return self.backend._get_label(self.addr)
 
     @cached_attr('version')
     def get_version(self):
