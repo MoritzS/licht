@@ -1,4 +1,4 @@
-import math
+import colorsys
 from collections import namedtuple
 from enum import Enum
 
@@ -13,37 +13,16 @@ class LightPower(Enum):
 class LightColor(namedtuple('LightColorBase', ['hue', 'saturation', 'brightness'])):
     @classmethod
     def from_rgb(cls, rgb):
-        pass
-
-    @staticmethod
-    def _float_to_rgb(value):
-        if value <= 0:
-            return 0
-        else:
-            return math.ceil(value * 256) - 1
+        rgb = [c / 255 for c in rgb]
+        h, s, v = colorsys.rgb_to_hsv(*rgb)
+        h = h * 360
+        return cls(h, s, v)
 
     @property
     def rgb(self):
-        interval = int(self.hue / 60)
-        offset = self.hue / 60 - interval
-        a = self.brightness * (1 - self.saturation)
-        b = self.brightness * (1 - self.saturation * offset)
-        c = self.brightness * (1 - self.saturation * (1 - offset))
-
-        if interval == 1:
-            r, g, b = b, self.brightness, a
-        elif interval == 2:
-            r, g, b = a, self.brightness, c
-        elif interval == 3:
-            r, g, b = a, b, self.brightness
-        elif interval == 4:
-            r, g, b = c, a, self.brightness
-        elif interval == 5:
-            r, g, b = self.brightness, a, b
-        else:
-            r, g, b = self.brightness, c, a
-
-        return (self._float_to_rgb(r), self._float_to_rgb(g), self._float_to_rgb(b))
+        h = self.hue / 360
+        rgb = colorsys.hsv_to_rgb(h, self.saturation, self.brightness)
+        return tuple(round(c * 255) for c in rgb)
 
 
 LightWhite = namedtuple('LightWhite', ['brightness', 'kelvin'])

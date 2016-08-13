@@ -3,6 +3,7 @@
 import struct
 import unittest
 
+from licht.base import LightColor
 from licht.utils import RESERVED, Bitfield, Field, FieldType
 
 
@@ -88,6 +89,25 @@ class BitFieldTest(unittest.TestCase):
         data = b'\x80\x9d\xab'
         f = self.ReservedFullBitfield.from_bytes(data)
         self.assertFieldsEqual(f, {'foo': 3456, 'bar': 3})
+
+
+class ColorsTest(unittest.TestCase):
+    test_colors = [
+        ((255,   0,   0), (  0, 1.0, 1.0)),
+        ((255, 255,   0), ( 60, 1.0, 1.0)),
+        ((  0, 255,   0), (120, 1.0, 1.0)),
+        ((  0, 255, 255), (180, 1.0, 1.0)),
+        ((  0,   0, 255), (240, 1.0, 1.0)),
+        ((255,   0, 255), (300, 1.0, 1.0)),
+    ]
+
+    def test_from_rgb(self):
+        for rgb, hsb in self.test_colors:
+            self.assertEqual(LightColor.from_rgb(rgb), hsb)
+
+    def test_to_rgb(self):
+        for rgb, hsb in self.test_colors:
+            self.assertEqual(LightColor(*hsb).rgb, rgb)
 
 
 if __name__ == '__main__':
