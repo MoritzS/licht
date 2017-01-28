@@ -2,8 +2,6 @@ import colorsys
 from collections import namedtuple
 from enum import Enum
 
-from .utils import cache_method
-
 
 class LightPower(Enum):
     OFF = 0
@@ -29,7 +27,7 @@ LightWhite = namedtuple('LightWhite', ['brightness', 'kelvin'])
 
 
 class Backend(object):
-    def get_light(self, *args, **kwargs):
+    async def get_light(self, *args, **kwargs):
         return Light(self, *args, **kwargs)
 
     def discover_lights(self):
@@ -59,10 +57,11 @@ class Light(object):
         self.backend = backend
         self.addr = addr
 
-    def __str__(self):
-        return self.get_label()
+    def __repr__(self):
+        return '{}(backend={!r}, addr={!r})'.format(
+            self.__class__.__name__, self.backend, self.addr
+        )
 
-    @cache_method
     def get_label(self):
         return self.backend.get_label(self)
 

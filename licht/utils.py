@@ -1,4 +1,4 @@
-import functools
+import asyncio
 import struct
 from collections import namedtuple
 from enum import Enum
@@ -239,15 +239,3 @@ class Bitfield(object, metaclass=BitfieldMeta):
         if key not in self.field_keys:
             raise ValueError('invalid key')
         self._data[key] = value
-
-
-def cache_method(meth):
-    name = '__cache_method_{}'.format(meth.__name__)
-
-    @functools.wraps(meth)
-    def func(self):
-        if name not in self.__dict__:
-            self.__dict__[name] = meth(self)
-        return self.__dict__[name]
-
-    return func

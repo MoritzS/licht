@@ -12,7 +12,7 @@ Currently only Lifx is supported but support for Philips Hue is planned.
 Requirements
 ============
 
-- Python 3.4 or higher
+- Python 3.6 or higher
 
 Getting Started
 ===============
@@ -28,67 +28,106 @@ If you want to see what this library can do just run the demo:
     Discovered "My Light 1"
     Discovered "My Light 2"
 
-    Running demo on "My Light 1":
+    ping:
+    My Light 1: ✔
+    My Light 2: ✔
 
-    ping: success
-    power: LightPower.OFF
-    color: LightWhite(brightness=0.8499885557335775, kelvin=3500)
-    power off: success
-    power on: success
-    bright white: success
-    warm white: success
-    color red: success
-    color green: success
-    color blue: success
+    get power:
+    My Light 2: LightPower.OFF
+    My Light 1: LightPower.ON
 
-    Running demo on "My Light 2":
+    get color:
+    My Light 1: LightWhite(brightness=0.8499885557335775, kelvin=3500)
+    My Light 2: LightColor(hue=239.9945067521172, saturation=0.004959182116426337, brightness=0.20619516289005874)
 
-    ping: success
-    power: LightPower.OFF
-    color: LightColor(hue=239.87914854657816, saturation=0.0009918364232852674, brightness=0.2030212863355459)
-    power off: success
-    power on: success
-    bright white: success
-    warm white: success
-    color red: success
-    color green: success
-    color blue: success
+    power off:
+    My Light 1: ✔
+    My Light 2: ✔
+
+    power on:
+    My Light 1: ✔
+    My Light 2: ✔
+
+    bright white:
+    My Light 1: ✔
+    My Light 2: ✔
+
+    warm white:
+    My Light 2: ✔
+    My Light 1: ✔
+
+    color red:
+    My Light 1: ✔
+    My Light 2: ✔
+
+    color green:
+    My Light 1: ✔
+    My Light 2: ✔
+
+    color blue:
+    My Light 1: ✔
+    My Light 2: ✔
+
+    Rainbow:
+    My Light 1: ✔
+    My Light 2: ✔
 
 
-Here are some examples on how to work with licht:
+Examples with asyncio
+=====================
 
-- Turn of all Lifx lights in your network:
+``licht`` uses ``asyncio``, so you have to run the following examples in an
+event loop. You can execute the examples like this:
+
+.. code-block:: python
+
+    from licht.lifx import LifxBackend
+
+    backend = LifxBackend()
+
+    async def example(backend):
+        # insert example code here
+
+    backend.loop.run_until_complete(example(backend))
+
+
+- Turn off all Lifx lights in your network one by one:
 
     .. code-block:: python
 
-        backend = LifxBackend()
-        for light in backend.discover_lights():
-            light.poweroff()
+        async for light in backend.discover_lights():
+            await light.poweroff()
+
+- Turn off all Lifx lights in your network simultaneously:
+
+    .. code-block:: python
+
+        lights = [light async for light in backend.discover_lights()]
+        asyncio.wait([light.poweroff() for light in lights])
 
 - Turn on a light with a specific IP address:
 
     .. code-block:: python
 
-        backend = LifxBackend()
-        light = backend.get_light('192.168.123.123')
-        light.poweron()
+        light = await backend.get_light('192.168.123.123')
+        await light.poweron()
 
 - Set the color of a light to red:
 
     .. code-block:: python
 
-        light.set_color(LightColor(hue=0, saturation=1, brightness=1))
+        await light.set_color(LightColor(hue=0, saturation=1, brightness=1))
 
 - Fade the color of a light to blue over 5 seconds:
 
     .. code-block:: python
 
-        light.fade_color(LightColor(hue=240, saturation=1, brightness=1), 5)
+        await light.fade_color(LightColor(hue=240, saturation=1, brightness=1), 5)
 
 - Dim a light that is currently white:
 
     .. code-block:: python
 
-        white = light.get_color()
+        white = await light.get_color()
         assert isinstance(white, LightWhite)
-        light.set_color(LightWhite(white.brightness / 2, white.kelvin))
+        await light.set_color(LightWhite(white.brightness / 2, white.kelvin))
