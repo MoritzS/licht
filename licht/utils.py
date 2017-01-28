@@ -239,3 +239,15 @@ class Bitfield(object, metaclass=BitfieldMeta):
         if key not in self.field_keys:
             raise ValueError('invalid key')
         self._data[key] = value
+
+
+def sync_iter(async_iter, *, loop=None):
+    async_iter = async_iter.__aiter__()
+    if loop is None:
+        loop = asyncio.get_event_loop()
+    try:
+        while True:
+            yield loop.run_until_complete(async_iter.__anext__())
+    except StopAsyncIteration:
+        pass
+    loop.run_until_complete(async_iter.aclose())

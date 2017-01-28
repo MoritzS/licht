@@ -1,6 +1,9 @@
 import colorsys
+import inspect
 from collections import namedtuple
 from enum import Enum
+
+from .utils import sync_iter
 
 
 class LightPower(Enum):
@@ -27,6 +30,11 @@ LightWhite = namedtuple('LightWhite', ['brightness', 'kelvin'])
 
 
 class Backend(object):
+    @classmethod
+    def sync(cls, *args, **kwargs):
+        backend = cls(*args, **kwargs)
+        return SyncBackend(backend)
+
     async def get_light(self, *args, **kwargs):
         return Light(self, *args, **kwargs)
 
@@ -85,3 +93,46 @@ class Light(object):
 
     def fade_color(self, color, ms):
         return self.backend.fade_color(self, color, ms)
+
+
+class SyncMixin(object):
+    def __getattr__(self, name):
+        value = getattr(self._async, name)
+        if not callable(value):
+            return value
+        else:
+            def func(*args, **kwargs):
+                ret = value(*args, **kwargs)
+                if inspect.isawaitable(ret):
+                    return self._loop.run_until_complete(ret)
+                else:
+                    return ret
+            return func
+
+
+class SyncBackend(SyncMixin):
+    def __init__(self, backend):
+        self._async = backend
+        self._loop = backend.loop
+        self._backend = backend
+
+    def __repr__(self):
+        return 'SyncBackend({!r})'.format(self._backend)
+
+    def get_light(self, *args, **kwargs):
+        light = self._backend.loop.run_until_complete(self._backend.get_light(*args, **kwargs))
+        return SyncLight(light)
+
+    def discover_lights(self):
+        for light in sync_iter(self._backend.discover_lights(), loop=self._backend.loop):
+            yield SyncLight(light)
+
+
+class SyncLight(SyncMixin):
+    def __init__(self, light):
+        self._async = light
+        self._loop = light.backend.loop
+        self._light = light
+
+    def __repr__(self):
+        return 'SyncLight({!r})'.format(self._light)

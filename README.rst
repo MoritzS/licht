@@ -131,3 +131,19 @@ event loop. You can execute the examples like this:
         white = await light.get_color()
         assert isinstance(white, LightWhite)
         await light.set_color(LightWhite(white.brightness / 2, white.kelvin))
+
+
+Examples without asyncio
+========================
+
+If you don't want to use ``asyncio`` you can use ``sync()`` on a backend. For
+example to turn off all Lifx lights in your network:
+
+.. code-block:: python
+
+    from licht.lifx import LifxBackend
+
+    backend = LifxBackend.sync()
+
+    for light in backend.discover_lights():
+        light.poweroff()
